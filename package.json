@@ -1,0 +1,16 @@
+{
+  "name": "delivery-restaurantes-api",
+  "version": "1.0.0",
+  "description": "API REST de produtos (pratos) para o tema Delivery de Restaurantes",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
