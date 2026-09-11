@@ -30,6 +30,4 @@ app.post("/api/pratos", (req, res) => {
   res.status(201).json(novoPrato);
 });
 
-app.listen(PORT, () => {
-  console.log(`API rodando em http://localhost:${PORT}`);
-});
+module.exports = app;
