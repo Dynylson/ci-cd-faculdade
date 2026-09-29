@@ -2,8 +2,6 @@ const express = require("express");
 const { pratos } = require("./pratos");
 
 const app = express();
-const PORT = 8080;
-
 app.use(express.json());
 
 app.get("/api/pratos", (req, res) => {
@@ -28,6 +26,18 @@ app.post("/api/pratos", (req, res) => {
 
   pratos.push(novoPrato);
   res.status(201).json(novoPrato);
+});
+
+app.delete("/api/pratos/:id", (req, res) => {
+  const id = Number(req.params.id);
+  const indice = pratos.findIndex((p) => p.id === id);
+
+  if (indice === -1) {
+    return res.status(404).json({ erro: "Prato não encontrado" });
+  }
+
+  pratos.splice(indice, 1);
+  res.status(204).send();
 });
 
 module.exports = app;
