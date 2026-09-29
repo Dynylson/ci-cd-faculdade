@@ -11,6 +11,7 @@
 |--------|---------------|---------------------------------------|
 | GET    | `/api/pratos` | Retorna a lista completa de pratos    |
 | POST   | `/api/pratos` | Cadastra um novo prato                |
+| DELETE | `/api/pratos/:id` | Remove um prato (`204` se removido, `404` se não existir) |
 
 ### `POST /api/pratos` — Body esperado
 
@@ -65,6 +66,9 @@ npm test
 
 # Rodar com relatório de cobertura
 npm run test:coverage
+
+# Rodar o linter (ESLint)
+npm run lint
 ```
 
 ### Cobertura atual
@@ -107,6 +111,16 @@ pull_request → checkout → setup Node.js 20 → npm ci → npm run test:cover
 
 ---
 
+### ✅ Fluxo 3 — [`workflow-qualidade.yml`](./.github/workflows/workflow-qualidade.yml)
+
+**Disparado em:** `push` e `pull_request` para `main` e `homologacao`. Job `Qualidade`:
+
+```
+checkout → setup Node.js 20 → npm ci → ESLint → testes (unidade + integração) → cobertura ≥ 90%
+```
+
+---
+
 ### 📌 Por que exigir 90% de cobertura?
 
 A cobertura de código mede **quais linhas, branches e funções** do código-fonte são efetivamente exercitadas pelos testes. Exigir um mínimo de 90% serve para:
@@ -129,6 +143,13 @@ O GitHub Flow foi escolhido por ser simples e adequado para projetos pequenos e 
 
 ---
 
+## 🔐 Commits assinados e proteção de branches
+
+- Todos os commits são assinados com uma chave SSH (`gpg.format ssh`, `commit.gpgsign true`); a chave pública está cadastrada no GitHub como *Signing Key*.
+- Branches `main` (produção) e `homologacao` protegidas: PR obrigatório, check `Qualidade` obrigatório e atualizado, commits assinados obrigatórios, histórico linear, sem force push e sem deleção.
+
+---
+
 ## 🗂️ Estrutura do projeto
 
 ```
@@ -136,13 +157,15 @@ O GitHub Flow foi escolhido por ser simples e adequado para projetos pequenos e 
 ├── .github/
 │   └── workflows/
 │       ├── workflow-commits.yml  # CI em push
-│       └── workflow-pr.yml       # CI em pull_request
+│       ├── workflow-pr.yml       # CI em pull_request
+│       └── workflow-qualidade.yml # Job de qualidade (lint + testes + cobertura)
 ├── src/
 │   ├── app.js                    # Rotas Express (exporta o app)
 │   ├── server.js                 # Inicialização do servidor HTTP
 │   └── pratos.js                 # Dados iniciais (pratos em memória)
 ├── tests/
 │   └── pratos.test.js            # Suite de testes (Jest + Supertest)
+├── eslint.config.js              # Configuração do linter
 ├── package.json
 └── README.md
 ```

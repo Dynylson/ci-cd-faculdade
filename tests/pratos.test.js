@@ -1,6 +1,6 @@
 /**
  * Testes automatizados — API Delivery de Restaurantes
- * Rotas cobertas: GET /api/pratos e POST /api/pratos
+ * Rotas cobertas: GET, POST e DELETE em /api/pratos
  */
 
 const request = require("supertest");
@@ -157,5 +157,67 @@ describe("POST /api/pratos", () => {
 
     expect(res.statusCode).toBe(201);
     expect(res.body.id).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /api/pratos/:id
+// ---------------------------------------------------------------------------
+
+describe("DELETE /api/pratos/:id", () => {
+  it("deve retornar 204 sem corpo ao remover um prato existente", async () => {
+    const res = await request(app).delete("/api/pratos/1");
+    expect(res.statusCode).toBe(204);
+    expect(res.text).toBe("");
+  });
+
+  it("o prato removido não deve mais aparecer na lista (GET)", async () => {
+    await request(app).delete("/api/pratos/2");
+    const res = await request(app).get("/api/pratos");
+    expect(res.body).toHaveLength(2);
+    expect(res.body.map((p) => p.id)).toEqual([1, 3]);
+  });
+
+  it("deve retornar 404 quando o prato não existe", async () => {
+    const res = await request(app).delete("/api/pratos/999");
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toHaveProperty("erro");
+  });
+
+  it("deve retornar 404 quando o id não é numérico", async () => {
+    const res = await request(app).delete("/api/pratos/abc");
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("deve retornar 404 ao remover o mesmo prato duas vezes", async () => {
+    await request(app).delete("/api/pratos/1");
+    const res = await request(app).delete("/api/pratos/1");
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("não deve alterar a lista quando o prato não existe", async () => {
+    await request(app).delete("/api/pratos/999");
+    const res = await request(app).get("/api/pratos");
+    expect(res.body).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fluxo de integração: POST -> DELETE -> GET
+// ---------------------------------------------------------------------------
+
+describe("Integração: ciclo de vida de um prato", () => {
+  it("cria, remove e confirma a remoção de um prato", async () => {
+    const criado = await request(app)
+      .post("/api/pratos")
+      .send({ nome: "Temaki", restaurante: "Sushi House", preco: 25 });
+    expect(criado.statusCode).toBe(201);
+
+    const removido = await request(app).delete(`/api/pratos/${criado.body.id}`);
+    expect(removido.statusCode).toBe(204);
+
+    const lista = await request(app).get("/api/pratos");
+    expect(lista.body.find((p) => p.id === criado.body.id)).toBeUndefined();
+    expect(lista.body).toHaveLength(3);
   });
 });
