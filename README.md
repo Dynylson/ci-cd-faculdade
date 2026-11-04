@@ -1,7 +1,14 @@
 # 🍽️ Delivery de Restaurantes — API
 
+[![CI/CD Status](https://github.com/Dynylson/ci-cd-faculdade/actions/workflows/workflow-qualidade.yml/badge.svg)](https://github.com/Dynylson/ci-cd-faculdade/actions/workflows/workflow-qualidade.yml)
+[![Docker Hub](https://badgen.net/badge/Docker%20Hub/lucgbrel%2Fci-cd-faculdade/blue?icon=docker)](https://hub.docker.com/repository/docker/lucgbrel/ci-cd-faculdade/general)
+[![Docker Size](https://badgen.net/docker/size/lucgbrel/ci-cd-faculdade?icon=docker&label=image%20size)](https://hub.docker.com/repository/docker/lucgbrel/ci-cd-faculdade/general)
+[![Docker Pulls](https://badgen.net/docker/pulls/lucgbrel/ci-cd-faculdade?icon=docker&label=pulls)](https://hub.docker.com/repository/docker/lucgbrel/ci-cd-faculdade/general)
+[![Coverage](https://badgen.net/badge/coverage/100%25/green)](https://github.com/Dynylson/ci-cd-faculdade)
+[![Node.js Version](https://badgen.net/badge/node/%3E=20/green?icon=node)](https://nodejs.org/)
+
 > API REST para gerenciamento de pratos em um sistema de delivery de restaurantes.  
-> Construída com **Node.js** + **Express**, testada com **Jest** + **Supertest** e integrada com **GitHub Actions**.
+> Construída com **Node.js** + **Express**, testada com **Jest** + **Supertest**, conteinerizada com **Docker** e com esteira CI/CD automatizada no **GitHub Actions** integrada ao **Docker Hub**.
 
 ---
 
@@ -28,7 +35,43 @@
 
 ---
 
-## 🚀 Como executar localmente
+## 🐳 Docker & Docker Hub
+
+A imagem da aplicação está hospedada e versionada publicamente no **Docker Hub**:
+
+🔗 **Repositório no Docker Hub:** [lucgbrel/ci-cd-faculdade](https://hub.docker.com/repository/docker/lucgbrel/ci-cd-faculdade/general) (ou [hub.docker.com/r/lucgbrel/ci-cd-faculdade](https://hub.docker.com/r/lucgbrel/ci-cd-faculdade))
+
+### 🚀 Como executar via Docker Hub
+
+Você pode rodar a aplicação imediatamente em qualquer ambiente com Docker instalado, sem precisar clonar o repositório ou instalar o Node.js:
+
+```bash
+# 1. Baixar a imagem mais recente
+docker pull lucgbrel/ci-cd-faculdade:latest
+
+# 2. Executar o container mapeando a porta 8080
+docker run -d -p 8080:8080 --name delivery-api lucgbrel/ci-cd-faculdade:latest
+
+# 3. Testar a rota de listagem de pratos
+curl http://localhost:8080/api/pratos
+```
+
+### 🔨 Como construir e testar a imagem localmente
+
+```bash
+# Construir a imagem a partir do Dockerfile
+docker build -t lucgbrel/ci-cd-faculdade:local .
+
+# Executar o container localmente
+docker run -d -p 8080:8080 --name delivery-local lucgbrel/ci-cd-faculdade:local
+
+# Parar e remover o container após o uso
+docker stop delivery-local && docker rm delivery-local
+```
+
+---
+
+## 🚀 Como executar localmente (sem Docker)
 
 **Pré-requisito:** [Node.js](https://nodejs.org/) v18 ou superior.
 
@@ -85,7 +128,7 @@ npm run lint
 
 ## ⚙️ CI/CD com GitHub Actions
 
-Este projeto possui uma esteira de integração contínua (CI) com dois fluxos automatizados:
+Este projeto possui uma esteira automatizada com GitHub Actions dividida em três fluxos:
 
 ### 🔁 Fluxo 1 — [`workflow-commits.yml`](./.github/workflows/workflow-commits.yml)
 
@@ -111,13 +154,24 @@ pull_request → checkout → setup Node.js 20 → npm ci → npm run test:cover
 
 ---
 
-### ✅ Fluxo 3 — [`workflow-qualidade.yml`](./.github/workflows/workflow-qualidade.yml)
+### 🚀 Fluxo 3 (Baseline) — [`workflow-qualidade.yml`](./.github/workflows/workflow-qualidade.yml)
 
-**Disparado em:** `push` e `pull_request` para `main` e `homologacao`. Job `Qualidade`:
+**Workflow principal da baseline**, configurado com **3 jobs encadeados**:
 
 ```
-checkout → setup Node.js 20 → npm ci → ESLint → testes (unidade + integração) → cobertura ≥ 90%
+[ 1. Qualidade e Testes ] ──► [ 2. Construção da Imagem Docker ] ──► [ 3. Publicação no DockerHub ]
+      (qualquer branch)                 (qualquer branch)                     (apenas na baseline)
 ```
+
+1. **Job 1: Qualidade e Testes (`qualidade`)**
+   - **Gatilho:** Pushes e Pull Requests em qualquer branch.
+   - **Ações:** Execução de ESLint, testes unitários/integração e verificação de cobertura mínima de 90%.
+2. **Job 2: Construção da Imagem Docker (`build-docker`)**
+   - **Gatilho:** Executado sempre que houver mudança em qualquer branch (depende do sucesso do Job 1).
+   - **Ações:** Prepara o ambiente Docker Buildx, compila a imagem via `Dockerfile` (`push: false`) e realiza um **smoke test** no container disparando requisição contra `/api/pratos`.
+3. **Job 3: Publicação da Imagem no DockerHub (`publish-docker`)**
+   - **Gatilho:** Executado **exclusivamente na baseline** (`main`), em eventos de `push` direto ou pós-merge.
+   - **Ações:** Autentica de forma segura no Docker Hub via GitHub Secrets (`DOCKERHUB_USERNAME` e `DOCKERHUB_TOKEN`) e publica a imagem tagueada como `:latest` e `:<commit-sha>`.
 
 ---
 
@@ -135,11 +189,9 @@ A cobertura de código mede **quais linhas, branches e funções** do código-fo
 
 Optamos pelo **GitHub Flow**:
 
-- A branch `main` é sempre estável e reflete o que está funcionando.
+- A branch `main` é a **baseline estável** e reflete o que está pronto para produção.
 - Cada nova funcionalidade é desenvolvida em uma branch própria a partir da `main` (ex.: `feature/post-prato`).
-- Ao concluir a feature, a branch é integrada de volta à `main` via Pull Request — passando obrigatoriamente pelo CI.
-
-O GitHub Flow foi escolhido por ser simples e adequado para projetos pequenos e de desenvolvimento solo, sem a necessidade das branches adicionais (`develop`, `release/*`, `hotfix/*`) que o Git Flow exige.
+- Ao concluir a feature, a branch é integrada de volta à `main` via Pull Request — passando obrigatoriamente pelas validações de qualidade e compilação da imagem Docker.
 
 ---
 
@@ -154,18 +206,20 @@ O GitHub Flow foi escolhido por ser simples e adequado para projetos pequenos e 
 
 ```
 .
+├── .dockerignore              # Arquivos ignorados no build do Docker
+├── Dockerfile                 # Especificação da imagem de produção Node.js
 ├── .github/
 │   └── workflows/
-│       ├── workflow-commits.yml  # CI em push
-│       ├── workflow-pr.yml       # CI em pull_request
-│       └── workflow-qualidade.yml # Job de qualidade (lint + testes + cobertura)
+│       ├── workflow-commits.yml   # CI em push
+│       ├── workflow-pr.yml        # CI em pull_request
+│       └── workflow-qualidade.yml # Pipeline da baseline: Qualidade, Build e Publicação Docker
 ├── src/
-│   ├── app.js                    # Rotas Express (exporta o app)
-│   ├── server.js                 # Inicialização do servidor HTTP
-│   └── pratos.js                 # Dados iniciais (pratos em memória)
+│   ├── app.js                 # Rotas Express (exporta o app)
+│   ├── server.js              # Inicialização do servidor HTTP (porta 8080)
+│   └── pratos.js              # Dados iniciais (pratos em memória)
 ├── tests/
-│   └── pratos.test.js            # Suite de testes (Jest + Supertest)
-├── eslint.config.js              # Configuração do linter
+│   └── pratos.test.js         # Suite de testes (Jest + Supertest)
+├── eslint.config.js           # Configuração do linter
 ├── package.json
 └── README.md
 ```

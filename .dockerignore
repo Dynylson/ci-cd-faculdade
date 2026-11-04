@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+tests
+coverage
+.git
+.github
+.gitignore
+eslint.config.js
+README.md
