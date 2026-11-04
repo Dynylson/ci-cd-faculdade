@@ -13,6 +13,9 @@ RUN npm ci --omit=dev --ignore-scripts
 # Copia o código-fonte da aplicação
 COPY src/ ./src/
 
+# Usa usuário não-root nativo do Node Alpine para segurança (exigência do SonarCloud)
+USER node
+
 # Expõe a porta configurada no server.js (8080)
 EXPOSE 8080
 
