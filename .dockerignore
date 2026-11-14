@@ -7,3 +7,5 @@ coverage
 .gitignore
 eslint.config.js
 README.md
+.vagrant
+Vagrantfile

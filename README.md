@@ -8,7 +8,7 @@
 [![Node.js Version](https://badgen.net/badge/node/%3E=20/green?icon=node)](https://nodejs.org/)
 
 > API REST para gerenciamento de pratos em um sistema de delivery de restaurantes.  
-> Construída com **Node.js** + **Express**, testada com **Jest** + **Supertest**, conteinerizada com **Docker** e com esteira CI/CD automatizada no **GitHub Actions** integrada ao **Docker Hub**.
+> Construída com **Node.js** + **Express**, testada com **Jest** + **Supertest**, conteinerizada com **Docker**, provisionada em VMs com **Vagrant** + **VirtualBox** e com esteira CI/CD automatizada no **GitHub Actions** integrada ao **Docker Hub**.
 
 ---
 
@@ -68,6 +68,106 @@ docker run -d -p 8080:8080 --name delivery-local lucgbrel/ci-cd-faculdade:local
 # Parar e remover o container após o uso
 docker stop delivery-local && docker rm delivery-local
 ```
+
+---
+
+## 🖥️ Infraestrutura virtual com Vagrant + VirtualBox
+
+O arquivo [`Vagrantfile`](./Vagrantfile) descreve duas máquinas virtuais **Ubuntu Server 24.04** (box `bento/ubuntu-24.04`) executadas no provedor **VirtualBox** e ligadas por uma rede privada:
+
+```
+┌─────────────────────────┐    curl / wget  :8080    ┌─────────────────────────────────┐
+│ VM1 — cliente           │ ───────────────────────► │ VM2 — backend                   │
+│ 192.168.56.10 · 1024 MB │                          │ 192.168.56.11 · 512 MB          │
+└─────────────────────────┘                          │ Node.js 22 + API (systemd)      │
+                                                     │ /vagrant_data ⇄ repositório     │
+                                                     └─────────────────────────────────┘
+```
+
+|                          | VM1 (`vm1`)                         | VM2 (`vm2`)                                                                 |
+|--------------------------|-------------------------------------|-----------------------------------------------------------------------------|
+| Função                   | Cliente usado para testar a API     | Executa o backend                                                           |
+| Memória principal        | 1024 MB                             | 512 MB                                                                      |
+| IPv4 privado (Classe C)  | `192.168.56.10`                     | `192.168.56.11`                                                             |
+| Provisionamento          | Garante `curl` e `wget`             | Instala Node.js 22 + dependências npm, sincroniza o projeto em `/vagrant_data` e executa a API na porta `8080` |
+
+- **Por que 512 MB na VM2?** O Ubuntu Server ocioso usa ~250 MB e o processo da API (Node.js + Express) ~65 MB de RSS; o restante é folga para o `npm ci` e o `apt` durante o provisionamento.
+- **Por que `192.168.56.x`?** É um endereço privado Classe C (faixa `192.168.0.0/16` da RFC 1918) e fica dentro da faixa `192.168.56.0/21`, que o VirtualBox libera por padrão para redes *host-only*.
+
+### Pré-requisitos
+
+- [VirtualBox](https://www.virtualbox.org/wiki/Downloads)
+- [Vagrant](https://developer.hashicorp.com/vagrant/install) (em versão compatível com o VirtualBox instalado)
+- Acesso à internet no primeiro `vagrant up` (download da box e do Node.js)
+
+### Passo a passo para subir a infraestrutura
+
+```bash
+# 1. Clonar o repositório e entrar na pasta
+git clone https://github.com/Dynylson/ci-cd-faculdade.git
+cd ci-cd-faculdade
+
+# 2. Criar e provisionar as duas VMs no VirtualBox (VM1 e depois VM2)
+vagrant up --provider=virtualbox
+
+# 3. Conferir se ambas estão no estado "running"
+vagrant status
+```
+
+O provisionamento da VM2 termina exibindo `API no ar: http://192.168.56.11:8080/api/pratos`. Se a API não subir, o `vagrant up` falha e mostra o log do serviço.
+
+### Testando a rota GET dentro da VM1
+
+```bash
+# 1. Acessar a VM1
+vagrant ssh vm1
+
+# 2. Dentro da VM1, chamar a rota GET da API que roda na VM2 — com curl...
+curl -i http://192.168.56.11:8080/api/pratos
+
+# ...ou com wget
+wget -qO- http://192.168.56.11:8080/api/pratos
+
+# 3. Sair da VM1
+exit
+```
+
+Também dá para executar o teste na VM1 direto do terminal do host:
+
+```bash
+vagrant ssh vm1 -c "curl -s http://192.168.56.11:8080/api/pratos"
+```
+
+Resposta esperada (`HTTP/1.1 200 OK`):
+
+```json
+[{"id":1,"nome":"Pizza Margherita","restaurante":"Cantina Italiana","preco":42.9},{"id":2,"nome":"Hambúrguer Artesanal","restaurante":"Burger House","preco":29.9},{"id":3,"nome":"Yakisoba de Frango","restaurante":"Sabor Oriental","preco":34.5}]
+```
+
+### Comandos úteis
+
+| Comando                                                   | O que faz                                                                  |
+|-----------------------------------------------------------|----------------------------------------------------------------------------|
+| `vagrant ssh vm2 -c "systemctl status delivery-api"`      | Mostra o status do serviço da API na VM2                                   |
+| `vagrant ssh vm2 -c "journalctl -u delivery-api -f"`      | Acompanha os logs da API                                                   |
+| `vagrant ssh vm2 -c "sudo systemctl restart delivery-api"` | Reinicia a API (ex.: depois de alterar o código no host)                   |
+| `vagrant provision vm2`                                   | Reexecuta o provisionamento (reinstala as dependências se o `package-lock.json` mudou) |
+| `vagrant halt`                                            | Desliga as VMs                                                             |
+| `vagrant destroy -f`                                      | Remove as VMs                                                              |
+
+### Como o `Vagrantfile` atende a cada requisito
+
+| Requisito                                    | Implementação                                                                                           |
+|----------------------------------------------|---------------------------------------------------------------------------------------------------------|
+| VM1 com 1024 MB                              | `vb.memory = 1024`                                                                                      |
+| IPv4 privado Classe C nas duas VMs           | `private_network` com `192.168.56.10` (VM1) e `192.168.56.11` (VM2)                                     |
+| VM2 com a memória necessária ao backend      | `vb.memory = 512`                                                                                       |
+| Instalar as dependências da aplicação na VM2 | Provisionador `dependencias`: Node.js 22 (repositório oficial NodeSource) + `npm ci --omit=dev`        |
+| Sincronizar a aplicação com `vagrant_data`   | `synced_folder ".", "/vagrant_data"`                                                                    |
+| Executar a aplicação                         | Provisionador `executar-api`: serviço systemd `delivery-api` (`node src/server.js`), reiniciado a cada `vagrant up`/`vagrant reload` |
+| Provedor VirtualBox                          | Blocos `provider "virtualbox"` + `VAGRANT_DEFAULT_PROVIDER=virtualbox`                                   |
+
+> As dependências npm da VM2 ficam em `/opt/delivery-api/node_modules`, fora da pasta sincronizada, e chegam à aplicação via `NODE_PATH`. Assim o `npm ci` da VM não apaga as dependências de desenvolvimento do `node_modules` do seu computador. O código executado continua sendo o de `/vagrant_data`.
 
 ---
 
@@ -219,6 +319,7 @@ Optamos pelo **GitHub Flow**:
 │   └── pratos.js              # Dados iniciais (pratos em memória)
 ├── tests/
 │   └── pratos.test.js         # Suite de testes (Jest + Supertest)
+├── Vagrantfile                # Infraestrutura virtual: VM1 (cliente) + VM2 (backend) no VirtualBox
 ├── eslint.config.js           # Configuração do linter
 ├── package.json
 └── README.md
