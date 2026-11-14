@@ -8,7 +8,7 @@
 [![Node.js Version](https://badgen.net/badge/node/%3E=20/green?icon=node)](https://nodejs.org/)
 
 > API REST para gerenciamento de pratos em um sistema de delivery de restaurantes.  
-> Construída com **Node.js** + **Express**, testada com **Jest** + **Supertest**, conteinerizada com **Docker**, provisionada em VMs com **Vagrant** + **VirtualBox** e com esteira CI/CD automatizada no **GitHub Actions** integrada ao **Docker Hub**.
+> Construída com **Node.js** + **Express**, testada com **Jest** + **Supertest**, conteinerizada com **Docker**, provisionada em VMs com **Vagrant** + **VirtualBox**, configurada com **Ansible** e com esteira CI/CD automatizada no **GitHub Actions** integrada ao **Docker Hub**.
 
 ---
 
@@ -76,22 +76,22 @@ docker stop delivery-local && docker rm delivery-local
 O arquivo [`Vagrantfile`](./Vagrantfile) descreve duas máquinas virtuais **Ubuntu Server 24.04** (box `bento/ubuntu-24.04`) executadas no provedor **VirtualBox** e ligadas por uma rede privada:
 
 ```
-┌─────────────────────────┐    curl / wget  :8080    ┌─────────────────────────────────┐
-│ VM1 — cliente           │ ───────────────────────► │ VM2 — backend                   │
-│ 192.168.56.10 · 1024 MB │                          │ 192.168.56.11 · 512 MB          │
-└─────────────────────────┘                          │ Node.js 22 + API (systemd)      │
-                                                     │ /vagrant_data ⇄ repositório     │
-                                                     └─────────────────────────────────┘
+┌───────────────────────────┐   SSH (Ansible)   ┌─────────────────────────────────┐
+│ VM1 — cliente + controle  │ ────────────────► │ VM2 — backend                   │
+│ 192.168.56.10 · 1024 MB   │   curl / wget     │ 192.168.56.11 · 1024 MB         │
+│ ansible-core              │  :8080 e :3000    │ :8080 API de /vagrant_data      │
+│ ~/ansible ⇄ ./ansible     │ ────────────────► │ :3000 API clonada pelo Ansible  │
+└───────────────────────────┘                   └─────────────────────────────────┘
 ```
 
 |                          | VM1 (`vm1`)                         | VM2 (`vm2`)                                                                 |
 |--------------------------|-------------------------------------|-----------------------------------------------------------------------------|
-| Função                   | Cliente usado para testar a API     | Executa o backend                                                           |
-| Memória principal        | 1024 MB                             | 512 MB                                                                      |
+| Função                   | Cliente para testar a API e nó de controle do Ansible | Executa o backend (nó gerenciado pelo Ansible)            |
+| Memória principal        | 1024 MB                             | 1024 MB                                                                     |
 | IPv4 privado (Classe C)  | `192.168.56.10`                     | `192.168.56.11`                                                             |
-| Provisionamento          | Garante `curl` e `wget`             | Instala Node.js 22 + dependências npm, sincroniza o projeto em `/vagrant_data` e executa a API na porta `8080` |
+| Provisionamento          | Instala `curl`, `wget` e `ansible-core`; monta `./ansible` em `~/ansible` | Instala Node.js 22 + dependências npm, sincroniza o projeto em `/vagrant_data`, executa a API na porta `8080` e autoriza a chave SSH do Ansible |
 
-- **Por que 512 MB na VM2?** O Ubuntu Server ocioso usa ~250 MB e o processo da API (Node.js + Express) ~65 MB de RSS; o restante é folga para o `npm ci` e o `apt` durante o provisionamento.
+- **Por que 1024 MB na VM2?** O Ubuntu Server ocioso usa ~250 MB e cada instância da API (Node.js + Express) ~65 MB de RSS. A VM2 roda duas instâncias (a do Vagrant e a do Ansible), e o restante é folga para os picos do `apt`, do `npm ci` e dos módulos Python que o Ansible executa nela.
 - **Por que `192.168.56.x`?** É um endereço privado Classe C (faixa `192.168.0.0/16` da RFC 1918) e fica dentro da faixa `192.168.56.0/21`, que o VirtualBox libera por padrão para redes *host-only*.
 
 ### Pré-requisitos
@@ -161,13 +161,111 @@ Resposta esperada (`HTTP/1.1 200 OK`):
 |----------------------------------------------|---------------------------------------------------------------------------------------------------------|
 | VM1 com 1024 MB                              | `vb.memory = 1024`                                                                                      |
 | IPv4 privado Classe C nas duas VMs           | `private_network` com `192.168.56.10` (VM1) e `192.168.56.11` (VM2)                                     |
-| VM2 com a memória necessária ao backend      | `vb.memory = 512`                                                                                       |
+| VM2 com a memória necessária ao backend      | `vb.memory = 1024`                                                                                      |
 | Instalar as dependências da aplicação na VM2 | Provisionador `dependencias`: Node.js 22 (repositório oficial NodeSource) + `npm ci --omit=dev`        |
 | Sincronizar a aplicação com `vagrant_data`   | `synced_folder ".", "/vagrant_data"`                                                                    |
 | Executar a aplicação                         | Provisionador `executar-api`: serviço systemd `delivery-api` (`node src/server.js`), reiniciado a cada `vagrant up`/`vagrant reload` |
 | Provedor VirtualBox                          | Blocos `provider "virtualbox"` + `VAGRANT_DEFAULT_PROVIDER=virtualbox`                                   |
 
 > As dependências npm da VM2 ficam em `/opt/delivery-api/node_modules`, fora da pasta sincronizada, e chegam à aplicação via `NODE_PATH`. Assim o `npm ci` da VM não apaga as dependências de desenvolvimento do `node_modules` do seu computador. O código executado continua sendo o de `/vagrant_data`.
+
+---
+
+## ⚙️ Configuração com Ansible
+
+A **VM1** é o **nó de controle** do Ansible e a **VM2** é o **nó gerenciado**. A configuração fica na pasta [`ansible/`](./ansible), que o Vagrant monta dentro da VM1 em `/home/vagrant/ansible`:
+
+| Arquivo                                                 | Conteúdo                                                                       |
+|---------------------------------------------------------|--------------------------------------------------------------------------------|
+| [`ansible.cfg`](./ansible/ansible.cfg)                  | Configuração do Ansible: inventário, usuário `vagrant`, chave SSH, *pipelining* |
+| [`hosts.ini`](./ansible/hosts.ini)                      | Inventário: grupo `backend` com a VM2 (`192.168.56.11`)                        |
+| [`configura-node.yaml`](./ansible/configura-node.yaml)  | Playbook que instala a aplicação na VM2                                        |
+
+**O que o Vagrant prepara para o Ansible**
+
+- **VM1:** instala o `ansible-core` (junto com `curl` e `wget`), monta a pasta `ansible/` e recebe a chave SSH privada do Ansible.
+- **VM2:** autoriza a chave pública correspondente para o usuário `vagrant`.
+- O par de chaves (RSA 3072) é gerado pelo `Vagrantfile` uma única vez, em `.vagrant/ansible/` (fora do git), e é reaproveitado se as VMs forem recriadas.
+
+**O que o playbook `configura-node.yaml` faz na VM2**
+
+1. Instala as **dependências de execução**: `git`, `curl`, `ca-certificates` e o **Node.js 22** (repositório oficial da NodeSource).
+2. **Clona o repositório** `https://github.com/Dynylson/ci-cd-faculdade.git` (branch `main`) em `/opt/ci-cd-faculdade`.
+3. Instala as **dependências npm de produção** (`npm ci --omit=dev`), só quando o código clonado muda.
+4. Cria o usuário de sistema `delivery` e o serviço systemd `delivery-api-ansible`, que executa a API na porta **3000**.
+5. Testa `GET /api/pratos` **a partir da VM1** e falha se a API não responder.
+
+> A porta 8080 da VM2 continua com a instância da etapa do Vagrant (código de `/vagrant_data`). A instância instalada pelo Ansible (código clonado do GitHub) usa a 3000, definida pela variável de ambiente `PORT`.
+
+### Como executar o playbook
+
+```bash
+# 1. Subir as VMs (se já existiam da etapa anterior: vagrant reload --provision)
+vagrant up --provider=virtualbox
+
+# 2. Acessar o nó de controle (VM1) e entrar na pasta montada com a configuração
+vagrant ssh vm1
+cd ~/ansible
+
+# 3. Conferir a conexão com a VM2 (resposta esperada: "ping": "pong")
+ansible all -m ping
+
+# 4. Executar o playbook
+ansible-playbook configura-node.yaml
+```
+
+Final esperado da execução:
+
+```
+TASK [Mostra o resultado] ******************************************************
+ok: [vm2] => {
+    "msg": "API no ar em http://192.168.56.11:3000/api/pratos (3 pratos cadastrados)"
+}
+
+PLAY RECAP *********************************************************************
+vm2                        : ok=15   changed=7    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+```
+
+`failed=0` e `unreachable=0` indicam que a VM2 foi configurada com sucesso (o número de `changed` pode variar). O playbook é idempotente: executado de novo, termina com `changed=0`.
+
+### Testando a aplicação com curl ou wget (dentro da VM1)
+
+```bash
+# Ainda dentro da VM1 — com curl...
+curl -i http://192.168.56.11:3000/api/pratos
+
+# ...ou com wget
+wget -qO- http://192.168.56.11:3000/api/pratos
+```
+
+Resposta esperada: `HTTP/1.1 200 OK` com a lista de pratos (o mesmo JSON da seção anterior).
+
+Os mesmos passos também podem ser executados direto do terminal do host:
+
+```bash
+vagrant ssh vm1 -c "cd ~/ansible && ansible-playbook configura-node.yaml"
+vagrant ssh vm1 -c "curl -s http://192.168.56.11:3000/api/pratos"
+```
+
+### Verificando a instalação na VM2
+
+| Comando                                                              | O que mostra                               |
+|----------------------------------------------------------------------|--------------------------------------------|
+| `vagrant ssh vm2 -c "systemctl status delivery-api-ansible"`         | Status do serviço instalado pelo Ansible   |
+| `vagrant ssh vm2 -c "git -C /opt/ci-cd-faculdade log --oneline -1"`  | Commit clonado do GitHub                   |
+| `vagrant ssh vm2 -c "journalctl -u delivery-api-ansible -f"`         | Logs da API                                |
+
+### Variáveis do playbook
+
+Ficam em `vars:` no playbook e podem ser sobrescritas com `-e` (ex.: `ansible-playbook configura-node.yaml -e repo_version=minha-branch`):
+
+| Variável       | Padrão                                              | Descrição                     |
+|----------------|-----------------------------------------------------|-------------------------------|
+| `repo_url`     | `https://github.com/Dynylson/ci-cd-faculdade.git`   | Repositório clonado           |
+| `repo_version` | `main`                                              | Branch, tag ou commit         |
+| `app_dir`      | `/opt/ci-cd-faculdade`                              | Destino do clone na VM2       |
+| `app_port`     | `3000`                                              | Porta da API                  |
+| `node_major`   | `22`                                                | Versão do Node.js             |
 
 ---
 
@@ -183,7 +281,7 @@ npm install
 npm start
 ```
 
-A API estará disponível em `http://localhost:8080`.
+A API estará disponível em `http://localhost:8080`. Para usar outra porta, defina a variável `PORT` (ex.: `PORT=3000 npm start`).
 
 ### Exemplos com curl
 
@@ -306,6 +404,10 @@ Optamos pelo **GitHub Flow**:
 
 ```
 .
+├── ansible/
+│   ├── ansible.cfg            # Configuração do Ansible (montada na VM1)
+│   ├── hosts.ini              # Inventário: VM2 no grupo backend
+│   └── configura-node.yaml    # Playbook: clone + dependências + serviço na VM2
 ├── .dockerignore              # Arquivos ignorados no build do Docker
 ├── Dockerfile                 # Especificação da imagem de produção Node.js
 ├── .github/
@@ -315,11 +417,11 @@ Optamos pelo **GitHub Flow**:
 │       └── workflow-qualidade.yml # Pipeline da baseline: Qualidade, Build e Publicação Docker
 ├── src/
 │   ├── app.js                 # Rotas Express (exporta o app)
-│   ├── server.js              # Inicialização do servidor HTTP (porta 8080)
+│   ├── server.js              # Inicialização do servidor HTTP (porta 8080 ou $PORT)
 │   └── pratos.js              # Dados iniciais (pratos em memória)
 ├── tests/
 │   └── pratos.test.js         # Suite de testes (Jest + Supertest)
-├── Vagrantfile                # Infraestrutura virtual: VM1 (cliente) + VM2 (backend) no VirtualBox
+├── Vagrantfile                # Infraestrutura virtual: VM1 (cliente + controle Ansible) + VM2 (backend)
 ├── eslint.config.js           # Configuração do linter
 ├── package.json
 └── README.md
